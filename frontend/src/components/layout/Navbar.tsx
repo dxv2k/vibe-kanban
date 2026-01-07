@@ -1,4 +1,4 @@
-import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams, useParams } from 'react-router-dom';
 import { useCallback } from 'react';
 import { siDiscord } from 'simple-icons';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import { useSearch } from '@/contexts/SearchContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useProject } from '@/contexts/ProjectContext';
 import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
+import { useOpenInEditor } from '@/hooks/useOpenInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useProjectRepos } from '@/hooks';
 import { useDiscordOnlineCount } from '@/hooks/useDiscordOnlineCount';
@@ -74,9 +75,18 @@ function NavDivider() {
 export function Navbar() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const params = useParams<{ attemptId?: string }>();
   const { projectId, project } = useProject();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
-  const handleOpenInEditor = useOpenProjectInEditor(project || null);
+
+  // Determine if we're on a task attempt page
+  const isAttemptPage = Boolean(params.attemptId);
+  const attemptId = params.attemptId;
+
+  // Use appropriate editor hook based on context
+  const handleOpenProjectInEditor = useOpenProjectInEditor(project || null);
+  const handleOpenAttemptInEditor = useOpenInEditor(attemptId);
+
   const { data: onlineCount } = useDiscordOnlineCount();
   const { loginStatus, reloadSystem } = useUserSystem();
 
@@ -116,7 +126,13 @@ export function Navbar() {
   };
 
   const handleOpenInIDE = () => {
-    handleOpenInEditor();
+    if (isAttemptPage && attemptId) {
+      // Open the task attempt's worktree
+      handleOpenAttemptInEditor();
+    } else {
+      // Open the project directory
+      handleOpenProjectInEditor();
+    }
   };
 
   const handleOpenOAuth = async () => {
