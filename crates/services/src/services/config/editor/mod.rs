@@ -260,11 +260,22 @@ impl EditorConfig {
             .or_else(|| self.code_server_base_url.clone())
             .unwrap_or_else(|| "http://100.124.29.25".to_string());
 
+        // Create a unique user-data-dir for this code-server instance to avoid
+        // state conflicts where coder.json remembers a different folder
+        let user_data_dir = std::env::temp_dir().join(format!("code-server-{}", port));
+        std::fs::create_dir_all(&user_data_dir).map_err(|e| EditorOpenError::LaunchFailed {
+            executable: code_server_path.clone(),
+            details: format!("Failed to create user-data-dir: {}", e),
+            editor_type: EditorType::CodeServer,
+        })?;
+
         let mut cmd = std::process::Command::new(&code_server_path);
         cmd.arg("--auth")
             .arg("none")
             .arg("--bind-addr")
             .arg(format!("0.0.0.0:{}", port))
+            .arg("--user-data-dir")
+            .arg(&user_data_dir)
             .arg(path)
             .env_remove("PORT"); // Remove PORT env var to prevent code-server from using it
 

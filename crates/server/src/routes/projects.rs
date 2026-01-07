@@ -314,7 +314,7 @@ pub async fn delete_project(
 #[derive(serde::Deserialize)]
 pub struct OpenEditorRequest {
     editor_type: Option<String>,
-    git_repo_path: Option<PathBuf>,
+    file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, serde::Serialize, ts_rs::TS)]
@@ -328,23 +328,26 @@ pub async fn open_project_in_editor(
     Json(payload): Json<Option<OpenEditorRequest>>,
 ) -> Result<ResponseJson<ApiResponse<OpenEditorResponse>>, ApiError> {
     let path = if let Some(ref req) = payload
-        && let Some(ref specified_path) = req.git_repo_path
+        && let Some(ref specified_path) = req.file_path
     {
+        // Use explicitly specified path if provided
         specified_path.clone()
-    } else if let Some(ref default_dir) = project.default_agent_working_dir {
-        // Use the project's default agent working directory if set
-        PathBuf::from(default_dir)
     } else {
-        // Fall back to the first repository
+        // Get the project's repositories
         let repositories = deployment
             .project()
             .get_repositories(&deployment.db().pool, project.id)
             .await?;
 
-        repositories
-            .first()
-            .map(|r| r.path.clone())
-            .ok_or_else(|| ApiError::BadRequest("Project has no repositories".to_string()))?
+        if let Some(first_repo) = repositories.first() {
+            // Prefer the first repository path
+            first_repo.path.clone()
+        } else if let Some(ref default_dir) = project.default_agent_working_dir {
+            // Fall back to default agent working directory only if no repositories exist
+            PathBuf::from(default_dir)
+        } else {
+            return Err(ApiError::BadRequest("Project has no repositories".to_string()));
+        }
     };
 
     let editor_config = {
