@@ -37,6 +37,14 @@ pub struct EditorConfig {
     remote_ssh_host: Option<String>,
     #[serde(default)]
     remote_ssh_user: Option<String>,
+    #[serde(default)]
+    code_server_path: Option<String>,
+    #[serde(default)]
+    code_server_base_url: Option<String>,
+    #[serde(default)]
+    code_server_port_start: Option<u16>,
+    #[serde(default)]
+    code_server_port_end: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, EnumIter)]
@@ -50,6 +58,7 @@ pub enum EditorType {
     IntelliJ,
     Zed,
     Xcode,
+    CodeServer,
     Custom,
 }
 
@@ -60,6 +69,10 @@ impl Default for EditorConfig {
             custom_command: None,
             remote_ssh_host: None,
             remote_ssh_user: None,
+            code_server_path: None,
+            code_server_base_url: None,
+            code_server_port_start: None,
+            code_server_port_end: None,
         }
     }
 }
@@ -77,6 +90,10 @@ impl EditorConfig {
             custom_command,
             remote_ssh_host,
             remote_ssh_user,
+            code_server_path: None,
+            code_server_base_url: None,
+            code_server_port_start: None,
+            code_server_port_end: None,
         }
     }
 
@@ -88,6 +105,10 @@ impl EditorConfig {
             EditorType::IntelliJ => "idea",
             EditorType::Zed => "zed",
             EditorType::Xcode => "xed",
+            EditorType::CodeServer => {
+                // CodeServer is handled separately via spawn_code_server
+                "code-server"
+            }
             EditorType::Custom => {
                 // Custom editor - use user-provided command or fallback to VSCode
                 self.custom_command.as_deref().unwrap_or("code")
@@ -129,6 +150,12 @@ impl EditorConfig {
     }
 
     pub async fn open_file(&self, path: &Path) -> Result<Option<String>, EditorOpenError> {
+        // Handle code-server separately
+        if matches!(self.editor_type, EditorType::CodeServer) {
+            let url = self.spawn_code_server(path).await?;
+            return Ok(Some(url));
+        }
+
         if let Some(url) = self.remote_url(path) {
             return Ok(Some(url));
         }
@@ -179,9 +206,62 @@ impl EditorConfig {
                 custom_command: self.custom_command.clone(),
                 remote_ssh_host: self.remote_ssh_host.clone(),
                 remote_ssh_user: self.remote_ssh_user.clone(),
+                code_server_path: self.code_server_path.clone(),
+                code_server_base_url: self.code_server_base_url.clone(),
+                code_server_port_start: self.code_server_port_start,
+                code_server_port_end: self.code_server_port_end,
             }
         } else {
             self.clone()
         }
+    }
+
+    /// Find an available port in the configured range
+    fn find_available_port(&self) -> Result<u16, EditorOpenError> {
+        let start = self.code_server_port_start.unwrap_or(8080);
+        let end = self.code_server_port_end.unwrap_or(8180);
+
+        for port in start..=end {
+            if let Ok(listener) = std::net::TcpListener::bind(("0.0.0.0", port)) {
+                drop(listener);
+                return Ok(port);
+            }
+        }
+
+        Err(EditorOpenError::LaunchFailed {
+            executable: "code-server".to_string(),
+            details: format!("No available ports in range {}-{}", start, end),
+            editor_type: EditorType::CodeServer,
+        })
+    }
+
+    /// Spawn code-server and return the URL
+    async fn spawn_code_server(&self, path: &Path) -> Result<String, EditorOpenError> {
+        let port = self.find_available_port()?;
+        let code_server_path = self
+            .code_server_path
+            .as_deref()
+            .unwrap_or("/home/dxv2k/bin/bin/code-server");
+
+        let base_url = self
+            .code_server_base_url
+            .as_deref()
+            .unwrap_or("http://100.124.29.25");
+
+        let mut cmd = std::process::Command::new(code_server_path);
+        cmd.arg("--auth")
+            .arg("none")
+            .arg("--bind-addr")
+            .arg(format!("0.0.0.0:{}", port))
+            .arg(path)
+            .env_remove("PORT"); // Remove PORT env var to prevent code-server from using it
+
+        cmd.spawn().map_err(|e| EditorOpenError::LaunchFailed {
+            executable: code_server_path.to_string(),
+            details: e.to_string(),
+            editor_type: EditorType::CodeServer,
+        })?;
+
+        Ok(format!("{}:{}", base_url, port))
     }
 }

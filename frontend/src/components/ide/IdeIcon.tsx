@@ -31,6 +31,8 @@ export function getIdeName(editorType: EditorType | undefined | null): string {
       return 'Zed';
     case EditorType.XCODE:
       return 'Xcode';
+    case EditorType.CODE_SERVER:
+      return 'code-server';
     case EditorType.CUSTOM:
       return 'IDE';
   }
@@ -44,7 +46,7 @@ export function IdeIcon({ editorType, className = 'h-4 w-4' }: IdeIconProps) {
   const ideName = getIdeName(editorType);
   let ideIconPath = '';
 
-  if (!editorType || editorType === EditorType.CUSTOM) {
+  if (!editorType || editorType === EditorType.CUSTOM || editorType === EditorType.CODE_SERVER) {
     // Generic fallback for other IDEs or no IDE configured
     return <Code2 className={className} />;
   }
