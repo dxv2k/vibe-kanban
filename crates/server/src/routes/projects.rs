@@ -331,7 +331,11 @@ pub async fn open_project_in_editor(
         && let Some(ref specified_path) = req.git_repo_path
     {
         specified_path.clone()
+    } else if let Some(ref default_dir) = project.default_agent_working_dir {
+        // Use the project's default agent working directory if set
+        PathBuf::from(default_dir)
     } else {
+        // Fall back to the first repository
         let repositories = deployment
             .project()
             .get_repositories(&deployment.db().pool, project.id)
