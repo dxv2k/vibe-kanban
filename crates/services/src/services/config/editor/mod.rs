@@ -218,8 +218,18 @@ impl EditorConfig {
 
     /// Find an available port in the configured range
     fn find_available_port(&self) -> Result<u16, EditorOpenError> {
-        let start = self.code_server_port_start.unwrap_or(8080);
-        let end = self.code_server_port_end.unwrap_or(8180);
+        // Check env vars first, then config, then defaults
+        let start = std::env::var("CODE_SERVER_PORT_START")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .or(self.code_server_port_start)
+            .unwrap_or(8080);
+
+        let end = std::env::var("CODE_SERVER_PORT_END")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .or(self.code_server_port_end)
+            .unwrap_or(8180);
 
         for port in start..=end {
             if let Ok(listener) = std::net::TcpListener::bind(("0.0.0.0", port)) {
@@ -238,15 +248,17 @@ impl EditorConfig {
     /// Spawn code-server and return the URL
     async fn spawn_code_server(&self, path: &Path) -> Result<String, EditorOpenError> {
         let port = self.find_available_port()?;
-        let code_server_path = self
-            .code_server_path
-            .as_deref()
-            .unwrap_or("/home/dxv2k/bin/bin/code-server");
 
-        let base_url = self
-            .code_server_base_url
-            .as_deref()
-            .unwrap_or("http://100.124.29.25");
+        // Check env vars first, then config, then hardcoded defaults
+        let code_server_path = std::env::var("CODE_SERVER_PATH")
+            .ok()
+            .or_else(|| self.code_server_path.clone())
+            .unwrap_or_else(|| "/home/dxv2k/bin/bin/code-server".to_string());
+
+        let base_url = std::env::var("CODE_SERVER_BASE_URL")
+            .ok()
+            .or_else(|| self.code_server_base_url.clone())
+            .unwrap_or_else(|| "http://100.124.29.25".to_string());
 
         let mut cmd = std::process::Command::new(code_server_path);
         cmd.arg("--auth")
