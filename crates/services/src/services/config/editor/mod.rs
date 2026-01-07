@@ -260,7 +260,7 @@ impl EditorConfig {
             .or_else(|| self.code_server_base_url.clone())
             .unwrap_or_else(|| "http://100.124.29.25".to_string());
 
-        let mut cmd = std::process::Command::new(code_server_path);
+        let mut cmd = std::process::Command::new(&code_server_path);
         cmd.arg("--auth")
             .arg("none")
             .arg("--bind-addr")
@@ -269,7 +269,7 @@ impl EditorConfig {
             .env_remove("PORT"); // Remove PORT env var to prevent code-server from using it
 
         cmd.spawn().map_err(|e| EditorOpenError::LaunchFailed {
-            executable: code_server_path.to_string(),
+            executable: code_server_path,
             details: e.to_string(),
             editor_type: EditorType::CodeServer,
         })?;
