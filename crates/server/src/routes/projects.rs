@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use anyhow;
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::{
-        Path, Query, State,
+        Json, Path, Query, State,
         ws::{WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
@@ -326,7 +326,7 @@ pub async fn open_project_in_editor(
     Extension(project): Extension<Project>,
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<Option<OpenEditorRequest>>,
-) -> Result<ResponseJson<ApiResponse<OpenEditorResponse>>, ApiError> {
+) -> Result<axum::response::Json<ApiResponse<OpenEditorResponse>>, ApiError> {
     let path = if let Some(ref req) = payload
         && let Some(ref specified_path) = req.file_path
     {
@@ -376,7 +376,7 @@ pub async fn open_project_in_editor(
                 )
                 .await;
 
-            Ok(ResponseJson(ApiResponse::success(OpenEditorResponse {
+            Ok(axum::response::Json(ApiResponse::success(OpenEditorResponse {
                 url,
             })))
         }

@@ -11,9 +11,9 @@ use std::{
 };
 
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::{
-        Query, State,
+        Json, Query, State,
         ws::{WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
@@ -517,7 +517,7 @@ pub async fn open_task_attempt_in_editor(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<OpenEditorRequest>,
-) -> Result<ResponseJson<ApiResponse<OpenEditorResponse>>, ApiError> {
+) -> Result<axum::response::Json<ApiResponse<OpenEditorResponse>>, ApiError> {
     let container_ref = deployment
         .container()
         .ensure_container_exists(&workspace)
@@ -569,7 +569,7 @@ pub async fn open_task_attempt_in_editor(
                 )
                 .await;
 
-            Ok(ResponseJson(ApiResponse::success(OpenEditorResponse {
+            Ok(axum::response::Json(ApiResponse::success(OpenEditorResponse {
                 url,
             })))
         }

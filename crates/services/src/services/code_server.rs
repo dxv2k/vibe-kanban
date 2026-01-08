@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{info, warn};
@@ -86,10 +86,7 @@ impl CodeServerService {
     }
 
     async fn ensure_running(&self) -> Result<u16, CodeServerError> {
-        let mut state = self
-            .inner
-            .lock()
-            .map_err(|e| CodeServerError::LockError(e.to_string()))?;
+        let mut state = self.inner.lock().await;
 
         // Check if instance is alive
         if let Some(ref mut instance) = state.instance {
@@ -179,7 +176,7 @@ impl CodeServerService {
 
 impl Drop for CodeServerService {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.inner.lock() {
+        if let Ok(mut state) = self.inner.try_lock() {
             if let Some(mut instance) = state.instance.take() {
                 let _ = instance.process.kill();
                 info!("Killed code-server on port {}", instance.port);
