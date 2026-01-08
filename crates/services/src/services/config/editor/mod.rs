@@ -1,10 +1,12 @@
-use std::{path::Path, str::FromStr};
+use std::{path::Path, str::FromStr, sync::LazyLock};
 
 use executors::{command::CommandBuilder, executors::ExecutorError};
 use serde::{Deserialize, Serialize};
 use strum_macros::{EnumIter, EnumString};
 use thiserror::Error;
 use ts_rs::TS;
+
+use crate::services::code_server::{CodeServerConfig, CodeServerService};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, Error)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -216,75 +218,26 @@ impl EditorConfig {
         }
     }
 
-    /// Find an available port in the configured range
-    fn find_available_port(&self) -> Result<u16, EditorOpenError> {
-        // Check env vars first, then config, then defaults
-        let start = std::env::var("CODE_SERVER_PORT_START")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .or(self.code_server_port_start)
-            .unwrap_or(8080);
-
-        let end = std::env::var("CODE_SERVER_PORT_END")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .or(self.code_server_port_end)
-            .unwrap_or(8180);
-
-        for port in start..=end {
-            if let Ok(listener) = std::net::TcpListener::bind(("0.0.0.0", port)) {
-                drop(listener);
-                return Ok(port);
-            }
-        }
-
-        Err(EditorOpenError::LaunchFailed {
-            executable: "code-server".to_string(),
-            details: format!("No available ports in range {}-{}", start, end),
-            editor_type: EditorType::CodeServer,
-        })
+    /// Get or create the global CodeServerService instance
+    fn get_code_server_service(&self) -> &'static CodeServerService {
+        static CODE_SERVER: LazyLock<CodeServerService> = LazyLock::new(|| {
+            let config = CodeServerConfig::default();
+            CodeServerService::new(config)
+        });
+        &CODE_SERVER
     }
 
     /// Spawn code-server and return the URL
     async fn spawn_code_server(&self, path: &Path) -> Result<String, EditorOpenError> {
-        let port = self.find_available_port()?;
+        let service = self.get_code_server_service();
 
-        // Check env vars first, then config, then hardcoded defaults
-        let code_server_path = std::env::var("CODE_SERVER_PATH")
-            .ok()
-            .or_else(|| self.code_server_path.clone())
-            .unwrap_or_else(|| "/home/dxv2k/bin/bin/code-server".to_string());
-
-        let base_url = std::env::var("CODE_SERVER_BASE_URL")
-            .ok()
-            .or_else(|| self.code_server_base_url.clone())
-            .unwrap_or_else(|| "http://100.124.29.25".to_string());
-
-        // Create a unique user-data-dir for this code-server instance to avoid
-        // state conflicts where coder.json remembers a different folder
-        let user_data_dir = std::env::temp_dir().join(format!("code-server-{}", port));
-        std::fs::create_dir_all(&user_data_dir).map_err(|e| EditorOpenError::LaunchFailed {
-            executable: code_server_path.clone(),
-            details: format!("Failed to create user-data-dir: {}", e),
-            editor_type: EditorType::CodeServer,
-        })?;
-
-        let mut cmd = std::process::Command::new(&code_server_path);
-        cmd.arg("--auth")
-            .arg("none")
-            .arg("--bind-addr")
-            .arg(format!("0.0.0.0:{}", port))
-            .arg("--user-data-dir")
-            .arg(&user_data_dir)
-            .arg(path)
-            .env_remove("PORT"); // Remove PORT env var to prevent code-server from using it
-
-        cmd.spawn().map_err(|e| EditorOpenError::LaunchFailed {
-            executable: code_server_path,
-            details: e.to_string(),
-            editor_type: EditorType::CodeServer,
-        })?;
-
-        Ok(format!("{}:{}", base_url, port))
+        service
+            .get_url_for_folder(path)
+            .await
+            .map_err(|e| EditorOpenError::LaunchFailed {
+                executable: "code-server".to_string(),
+                details: e.to_string(),
+                editor_type: EditorType::CodeServer,
+            })
     }
 }
