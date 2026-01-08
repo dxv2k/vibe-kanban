@@ -28,6 +28,7 @@ struct RunningInstance {
     port: u16,
     process: Child,
     started_at: Instant,
+    workspace_path: std::path::PathBuf,
 }
 
 #[derive(Clone)]
@@ -43,9 +44,9 @@ impl Default for CodeServerConfig {
     fn default() -> Self {
         Self {
             executable_path: std::env::var("CODE_SERVER_PATH")
-                .unwrap_or_else(|_| "/home/dxv2k/bin/bin/code-server".to_string()),
+                .unwrap_or_else(|_| "code-server".to_string()),
             base_url: std::env::var("CODE_SERVER_BASE_URL")
-                .unwrap_or_else(|_| "http://100.124.29.25".to_string()),
+                .unwrap_or_else(|_| "http://127.0.0.1".to_string()),
             data_dir: std::env::var("CODE_SERVER_DATA_DIR").unwrap_or_else(|_| {
                 dirs::home_dir()
                     .map(|h| h.join(".vibe-kanban/code-server").to_string_lossy().to_string())
@@ -72,46 +73,58 @@ impl CodeServerService {
     }
 
     /// Get URL for opening a folder in code-server
-    /// Spawns instance if needed, reuses if alive
+    /// Spawns instance if needed, reuses if same workspace, restarts if different workspace
     pub async fn get_url_for_folder(&self, folder_path: &Path) -> Result<String, CodeServerError> {
-        let port = self.ensure_running().await?;
+        let port = self.ensure_running(folder_path).await?;
 
-        // Use query parameter for folder - no restart needed!
-        let path_str = folder_path.to_string_lossy();
-        let encoded_path = urlencoding::encode(&path_str);
+        // code-server is started with the workspace path, so just return the base URL
         Ok(format!(
-            "{}:{}/?folder={}",
-            self.config.base_url, port, encoded_path
+            "{}:{}",
+            self.config.base_url, port
         ))
     }
 
-    async fn ensure_running(&self) -> Result<u16, CodeServerError> {
+    async fn ensure_running(&self, workspace_path: &Path) -> Result<u16, CodeServerError> {
         let mut state = self.inner.lock().await;
 
-        // Check if instance is alive
+        // Check if instance is alive and matches workspace
         if let Some(ref mut instance) = state.instance {
             if Self::is_port_responsive(instance.port) {
-                info!(
-                    "Reusing existing code-server on port {} (uptime: {:?})",
-                    instance.port,
-                    instance.started_at.elapsed()
+                // Check if workspace matches
+                if instance.workspace_path == workspace_path {
+                    info!(
+                        "Reusing existing code-server on port {} for workspace {:?} (uptime: {:?})",
+                        instance.port,
+                        workspace_path,
+                        instance.started_at.elapsed()
+                    );
+                    return Ok(instance.port);
+                } else {
+                    // Different workspace - kill and respawn
+                    info!(
+                        "Workspace changed from {:?} to {:?}, restarting code-server",
+                        instance.workspace_path,
+                        workspace_path
+                    );
+                    let _ = instance.process.kill();
+                    state.instance = None;
+                }
+            } else {
+                // Dead - clean up
+                warn!(
+                    "Code-server on port {} is dead, respawning",
+                    instance.port
                 );
-                return Ok(instance.port);
+                let _ = instance.process.kill();
+                state.instance = None;
             }
-            // Dead - clean up
-            warn!(
-                "Code-server on port {} is dead, respawning",
-                instance.port
-            );
-            let _ = instance.process.kill();
-            state.instance = None;
         }
 
         // Spawn new instance
         let port = self.find_available_port()?;
-        info!("Spawning new code-server on port {}", port);
+        info!("Spawning new code-server on port {} for workspace {:?}", port, workspace_path);
 
-        let process = self.spawn_process(port)?;
+        let process = self.spawn_process(port, workspace_path)?;
 
         // Wait for startup
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -125,6 +138,7 @@ impl CodeServerService {
             port,
             process,
             started_at: Instant::now(),
+            workspace_path: workspace_path.to_path_buf(),
         });
 
         info!("Code-server started successfully on port {}", port);
@@ -152,7 +166,7 @@ impl CodeServerService {
         })
     }
 
-    fn spawn_process(&self, port: u16) -> Result<Child, CodeServerError> {
+    fn spawn_process(&self, port: u16, workspace_path: &Path) -> Result<Child, CodeServerError> {
         // Create data directory if it doesn't exist
         let data_dir = std::path::Path::new(&self.config.data_dir);
         if !data_dir.exists() {
@@ -168,6 +182,7 @@ impl CodeServerService {
             .arg(format!("0.0.0.0:{}", port))
             .arg("--user-data-dir")
             .arg(&self.config.data_dir)
+            .arg(workspace_path)  // Pass workspace as final positional argument
             .env_remove("PORT")
             .spawn()
             .map_err(|e| CodeServerError::SpawnFailed(e.to_string()))
