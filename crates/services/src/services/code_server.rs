@@ -167,10 +167,21 @@ impl CodeServerService {
     }
 
     fn spawn_process(&self, port: u16, workspace_path: &Path) -> Result<Child, CodeServerError> {
-        // Create data directory if it doesn't exist
-        let data_dir = std::path::Path::new(&self.config.data_dir);
-        if !data_dir.exists() {
-            std::fs::create_dir_all(data_dir).map_err(|e| {
+        // Create workspace-specific data directory to prevent coder.json conflicts
+        // Use a hash of the workspace path to create a unique subdirectory
+        let workspace_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            workspace_path.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        let workspace_data_dir = std::path::Path::new(&self.config.data_dir)
+            .join(format!("workspace-{:x}", workspace_hash));
+
+        if !workspace_data_dir.exists() {
+            std::fs::create_dir_all(&workspace_data_dir).map_err(|e| {
                 CodeServerError::SpawnFailed(format!("Failed to create data dir: {}", e))
             })?;
         }
@@ -181,7 +192,7 @@ impl CodeServerService {
             .arg("--bind-addr")
             .arg(format!("0.0.0.0:{}", port))
             .arg("--user-data-dir")
-            .arg(&self.config.data_dir)
+            .arg(&workspace_data_dir)
             .arg(workspace_path)  // Pass workspace as final positional argument
             .env_remove("PORT")
             .spawn()
