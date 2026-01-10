@@ -1,10 +1,12 @@
-use std::{path::Path, str::FromStr};
+use std::{path::Path, str::FromStr, sync::LazyLock};
 
 use executors::{command::CommandBuilder, executors::ExecutorError};
 use serde::{Deserialize, Serialize};
 use strum_macros::{EnumIter, EnumString};
 use thiserror::Error;
 use ts_rs::TS;
+
+use crate::services::code_server::{CodeServerConfig, CodeServerService};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, Error)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -37,6 +39,14 @@ pub struct EditorConfig {
     remote_ssh_host: Option<String>,
     #[serde(default)]
     remote_ssh_user: Option<String>,
+    #[serde(default)]
+    code_server_path: Option<String>,
+    #[serde(default)]
+    code_server_base_url: Option<String>,
+    #[serde(default)]
+    code_server_port_start: Option<u16>,
+    #[serde(default)]
+    code_server_port_end: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, EnumIter)]
@@ -50,6 +60,7 @@ pub enum EditorType {
     IntelliJ,
     Zed,
     Xcode,
+    CodeServer,
     Custom,
 }
 
@@ -60,6 +71,10 @@ impl Default for EditorConfig {
             custom_command: None,
             remote_ssh_host: None,
             remote_ssh_user: None,
+            code_server_path: None,
+            code_server_base_url: None,
+            code_server_port_start: None,
+            code_server_port_end: None,
         }
     }
 }
@@ -77,6 +92,10 @@ impl EditorConfig {
             custom_command,
             remote_ssh_host,
             remote_ssh_user,
+            code_server_path: None,
+            code_server_base_url: None,
+            code_server_port_start: None,
+            code_server_port_end: None,
         }
     }
 
@@ -88,6 +107,10 @@ impl EditorConfig {
             EditorType::IntelliJ => "idea",
             EditorType::Zed => "zed",
             EditorType::Xcode => "xed",
+            EditorType::CodeServer => {
+                // CodeServer is handled separately via spawn_code_server
+                "code-server"
+            }
             EditorType::Custom => {
                 // Custom editor - use user-provided command or fallback to VSCode
                 self.custom_command.as_deref().unwrap_or("code")
@@ -129,6 +152,12 @@ impl EditorConfig {
     }
 
     pub async fn open_file(&self, path: &Path) -> Result<Option<String>, EditorOpenError> {
+        // Handle code-server separately
+        if matches!(self.editor_type, EditorType::CodeServer) {
+            let url = self.spawn_code_server(path).await?;
+            return Ok(Some(url));
+        }
+
         if let Some(url) = self.remote_url(path) {
             return Ok(Some(url));
         }
@@ -179,9 +208,36 @@ impl EditorConfig {
                 custom_command: self.custom_command.clone(),
                 remote_ssh_host: self.remote_ssh_host.clone(),
                 remote_ssh_user: self.remote_ssh_user.clone(),
+                code_server_path: self.code_server_path.clone(),
+                code_server_base_url: self.code_server_base_url.clone(),
+                code_server_port_start: self.code_server_port_start,
+                code_server_port_end: self.code_server_port_end,
             }
         } else {
             self.clone()
         }
+    }
+
+    /// Get or create the global CodeServerService instance
+    fn get_code_server_service(&self) -> &'static CodeServerService {
+        static CODE_SERVER: LazyLock<CodeServerService> = LazyLock::new(|| {
+            let config = CodeServerConfig::default();
+            CodeServerService::new(config)
+        });
+        &CODE_SERVER
+    }
+
+    /// Spawn code-server and return the URL
+    async fn spawn_code_server(&self, path: &Path) -> Result<String, EditorOpenError> {
+        let service = self.get_code_server_service();
+
+        service
+            .get_url_for_folder(path)
+            .await
+            .map_err(|e| EditorOpenError::LaunchFailed {
+                executable: "code-server".to_string(),
+                details: e.to_string(),
+                editor_type: EditorType::CodeServer,
+            })
     }
 }
