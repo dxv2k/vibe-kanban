@@ -102,6 +102,11 @@ pub fn normalize_macos_private_alias<P: AsRef<Path>>(p: P) -> PathBuf {
 }
 
 pub fn get_vibe_kanban_temp_dir() -> std::path::PathBuf {
+    // Allow override via environment variable (supports ~ expansion)
+    if let Ok(custom_dir) = std::env::var("VIBE_KANBAN_WORKSPACE_DIR") {
+        return expand_tilde(&custom_dir);
+    }
+
     let dir_name = if cfg!(debug_assertions) {
         "vibe-kanban-dev"
     } else {
