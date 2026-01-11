@@ -246,7 +246,10 @@ ORDER BY t.created_at DESC"#,
   t.created_at                    AS "created_at!: DateTime<Utc>",
   t.updated_at                    AS "updated_at!: DateTime<Utc>",
   p.name                          AS "project_name!: String",
-  COALESCE(MAX(w.updated_at), t.updated_at) AS "last_activity_at!: DateTime<Utc>",
+  COALESCE(
+    (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
+    t.updated_at
+  ) AS "last_activity_at!: DateTime<Utc>",
 
   CASE WHEN EXISTS (
     SELECT 1
@@ -280,11 +283,12 @@ ORDER BY t.created_at DESC"#,
     )                               AS "executor!: String"
 
 FROM tasks t
-LEFT JOIN workspaces w ON w.task_id = t.id
 JOIN projects p ON p.id = t.project_id
 WHERE t.project_id IN ({})
-GROUP BY t.id
-ORDER BY last_activity_at DESC
+ORDER BY COALESCE(
+  (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
+  t.updated_at
+) DESC
 LIMIT {}"#,
                 project_filter, limit
             )
@@ -301,7 +305,10 @@ LIMIT {}"#,
   t.created_at                    AS "created_at!: DateTime<Utc>",
   t.updated_at                    AS "updated_at!: DateTime<Utc>",
   p.name                          AS "project_name!: String",
-  COALESCE(MAX(w.updated_at), t.updated_at) AS "last_activity_at!: DateTime<Utc>",
+  COALESCE(
+    (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
+    t.updated_at
+  ) AS "last_activity_at!: DateTime<Utc>",
 
   CASE WHEN EXISTS (
     SELECT 1
@@ -335,10 +342,11 @@ LIMIT {}"#,
     )                               AS "executor!: String"
 
 FROM tasks t
-LEFT JOIN workspaces w ON w.task_id = t.id
 JOIN projects p ON p.id = t.project_id
-GROUP BY t.id
-ORDER BY last_activity_at DESC
+ORDER BY COALESCE(
+  (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
+  t.updated_at
+) DESC
 LIMIT {}"#,
                 limit
             )
