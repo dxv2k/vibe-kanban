@@ -5,6 +5,7 @@ import i18n from '@/i18n';
 import { Projects } from '@/pages/Projects';
 import { ProjectTasks } from '@/pages/ProjectTasks';
 import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
+import { RecentTasks } from '@/pages/RecentTasks';
 import { NormalLayout } from '@/components/layout/NormalLayout';
 import { usePostHog } from 'posthog-js/react';
 import { useAuth } from '@/hooks';
@@ -130,6 +131,7 @@ function AppContent() {
               <Route element={<NormalLayout />}>
                 <Route path="/" element={<Projects />} />
                 <Route path="/projects" element={<Projects />} />
+                <Route path="/recent" element={<RecentTasks />} />
                 <Route path="/projects/:projectId" element={<Projects />} />
                 <Route
                   path="/projects/:projectId/tasks"

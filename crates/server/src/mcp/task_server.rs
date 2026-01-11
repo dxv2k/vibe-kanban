@@ -4,7 +4,7 @@ use db::models::{
     project::Project,
     repo::Repo,
     tag::Tag,
-    task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, RecentTaskWithProject, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{Workspace, WorkspaceContext},
 };
 use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
@@ -182,6 +182,63 @@ pub struct ListTasksResponse {
 pub struct ListTasksFilters {
     pub status: Option<String>,
     pub limit: i32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListRecentTasksRequest {
+    #[schemars(
+        description = "Optional comma-separated list of project IDs to filter tasks (e.g., 'uuid1,uuid2')"
+    )]
+    pub project_ids: Option<String>,
+    #[schemars(description = "Maximum number of recent tasks to return (default: 50)")]
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct RecentTaskSummary {
+    #[schemars(description = "The unique identifier of the task")]
+    pub id: String,
+    #[schemars(description = "The title of the task")]
+    pub title: String,
+    #[schemars(description = "The name of the project this task belongs to")]
+    pub project_name: String,
+    #[schemars(description = "Current status of the task")]
+    pub status: String,
+    #[schemars(description = "When the task was created")]
+    pub created_at: String,
+    #[schemars(description = "When the task was last updated")]
+    pub updated_at: String,
+    #[schemars(description = "When the task was last worked on (most recent workspace activity)")]
+    pub last_activity_at: String,
+    #[schemars(description = "Whether the task has an in-progress execution attempt")]
+    pub has_in_progress_attempt: bool,
+    #[schemars(description = "Whether the last execution attempt failed")]
+    pub last_attempt_failed: bool,
+    #[schemars(description = "The executor used for the most recent attempt")]
+    pub executor: String,
+}
+
+impl RecentTaskSummary {
+    fn from_recent_task(task: RecentTaskWithProject) -> Self {
+        Self {
+            id: task.task.id.to_string(),
+            title: task.task.title.to_string(),
+            project_name: task.project_name,
+            status: task.task.status.to_string(),
+            created_at: task.task.created_at.to_rfc3339(),
+            updated_at: task.task.updated_at.to_rfc3339(),
+            last_activity_at: task.last_activity_at.to_rfc3339(),
+            has_in_progress_attempt: task.task.has_in_progress_attempt,
+            last_attempt_failed: task.task.last_attempt_failed,
+            executor: task.task.executor,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ListRecentTasksResponse {
+    pub tasks: Vec<RecentTaskSummary>,
+    pub count: usize,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -635,6 +692,46 @@ impl TaskServer {
                 status: status.clone(),
                 limit: task_limit as i32,
             },
+        };
+
+        TaskServer::success(&response)
+    }
+
+    #[tool(
+        description = "List recent tasks across all projects or filtered by project IDs, sorted by last activity. Shows tasks that were recently worked on."
+    )]
+    async fn list_recent_tasks(
+        &self,
+        Parameters(ListRecentTasksRequest {
+            project_ids,
+            limit,
+        }): Parameters<ListRecentTasksRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let query_params = if let Some(ref pids) = project_ids {
+            format!(
+                "project_ids={}&limit={}",
+                pids,
+                limit.unwrap_or(50)
+            )
+        } else {
+            format!("limit={}", limit.unwrap_or(50))
+        };
+
+        let url = self.url(&format!("/api/tasks/recent?{}", query_params));
+        let tasks: Vec<RecentTaskWithProject> = match self.send_json(self.client.get(&url)).await
+        {
+            Ok(t) => t,
+            Err(e) => return Ok(e),
+        };
+
+        let task_summaries: Vec<RecentTaskSummary> = tasks
+            .into_iter()
+            .map(RecentTaskSummary::from_recent_task)
+            .collect();
+
+        let response = ListRecentTasksResponse {
+            count: task_summaries.len(),
+            tasks: task_summaries,
         };
 
         TaskServer::success(&response)

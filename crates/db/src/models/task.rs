@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, Sqlite, SqlitePool, Type};
+use sqlx::{Executor, FromRow, Row, Sqlite, SqlitePool, Type};
 use strum_macros::{Display, EnumString};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -56,6 +56,15 @@ impl std::ops::DerefMut for TaskWithAttemptStatus {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.task
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RecentTaskWithProject {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub task: TaskWithAttemptStatus,
+    pub project_name: String,
+    pub last_activity_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -206,6 +215,177 @@ ORDER BY t.created_at DESC"#,
                 has_in_progress_attempt: rec.has_in_progress_attempt != 0,
                 last_attempt_failed: rec.last_attempt_failed != 0,
                 executor: rec.executor,
+            })
+            .collect();
+
+        Ok(tasks)
+    }
+
+    pub async fn find_recent_with_attempt_status(
+        pool: &SqlitePool,
+        project_ids: Option<Vec<Uuid>>,
+        limit: i64,
+    ) -> Result<Vec<RecentTaskWithProject>, sqlx::Error> {
+        let query = if let Some(ref pids) = project_ids {
+            // Build project_id filter as comma-separated UUIDs for IN clause
+            let project_filter = pids
+                .iter()
+                .map(|id| format!("'{}'", id))
+                .collect::<Vec<_>>()
+                .join(",");
+
+            format!(
+                r#"SELECT
+  t.id                            AS "id!: Uuid",
+  t.project_id                    AS "project_id!: Uuid",
+  t.title,
+  t.description,
+  t.status                        AS "status!: TaskStatus",
+  t.parent_workspace_id           AS "parent_workspace_id: Uuid",
+  t.shared_task_id                AS "shared_task_id: Uuid",
+  t.created_at                    AS "created_at!: DateTime<Utc>",
+  t.updated_at                    AS "updated_at!: DateTime<Utc>",
+  p.name                          AS "project_name!: String",
+  COALESCE(MAX(w.updated_at), t.updated_at) AS "last_activity_at!: DateTime<Utc>",
+
+  CASE WHEN EXISTS (
+    SELECT 1
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w2.task_id       = t.id
+       AND ep.status        = 'running'
+       AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     LIMIT 1
+  ) THEN 1 ELSE 0 END            AS "has_in_progress_attempt!: i64",
+
+  CASE WHEN (
+    SELECT ep.status
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w2.task_id       = t.id
+     AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     ORDER BY ep.created_at DESC
+     LIMIT 1
+  ) IN ('failed','killed') THEN 1 ELSE 0 END
+                                 AS "last_attempt_failed!: i64",
+
+  ( SELECT s.executor
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      WHERE w2.task_id = t.id
+     ORDER BY s.created_at DESC
+      LIMIT 1
+    )                               AS "executor!: String"
+
+FROM tasks t
+LEFT JOIN workspaces w ON w.task_id = t.id
+JOIN projects p ON p.id = t.project_id
+WHERE t.project_id IN ({})
+GROUP BY t.id
+ORDER BY last_activity_at DESC
+LIMIT {}"#,
+                project_filter, limit
+            )
+        } else {
+            format!(
+                r#"SELECT
+  t.id                            AS "id!: Uuid",
+  t.project_id                    AS "project_id!: Uuid",
+  t.title,
+  t.description,
+  t.status                        AS "status!: TaskStatus",
+  t.parent_workspace_id           AS "parent_workspace_id: Uuid",
+  t.shared_task_id                AS "shared_task_id: Uuid",
+  t.created_at                    AS "created_at!: DateTime<Utc>",
+  t.updated_at                    AS "updated_at!: DateTime<Utc>",
+  p.name                          AS "project_name!: String",
+  COALESCE(MAX(w.updated_at), t.updated_at) AS "last_activity_at!: DateTime<Utc>",
+
+  CASE WHEN EXISTS (
+    SELECT 1
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w2.task_id       = t.id
+       AND ep.status        = 'running'
+       AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     LIMIT 1
+  ) THEN 1 ELSE 0 END            AS "has_in_progress_attempt!: i64",
+
+  CASE WHEN (
+    SELECT ep.status
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      JOIN execution_processes ep ON ep.session_id = s.id
+     WHERE w2.task_id       = t.id
+     AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
+     ORDER BY ep.created_at DESC
+     LIMIT 1
+  ) IN ('failed','killed') THEN 1 ELSE 0 END
+                                 AS "last_attempt_failed!: i64",
+
+  ( SELECT s.executor
+      FROM workspaces w2
+      JOIN sessions s ON s.workspace_id = w2.id
+      WHERE w2.task_id = t.id
+     ORDER BY s.created_at DESC
+      LIMIT 1
+    )                               AS "executor!: String"
+
+FROM tasks t
+LEFT JOIN workspaces w ON w.task_id = t.id
+JOIN projects p ON p.id = t.project_id
+GROUP BY t.id
+ORDER BY last_activity_at DESC
+LIMIT {}"#,
+                limit
+            )
+        };
+
+        let records = sqlx::query(&query).fetch_all(pool).await?;
+
+        let tasks = records
+            .into_iter()
+            .map(|rec| {
+                let id: Uuid = rec.try_get("id").unwrap();
+                let project_id: Uuid = rec.try_get("project_id").unwrap();
+                let title: String = rec.try_get("title").unwrap();
+                let description: Option<String> = rec.try_get("description").ok();
+                let status: TaskStatus = rec.try_get("status").unwrap();
+                let parent_workspace_id: Option<Uuid> =
+                    rec.try_get("parent_workspace_id").ok().flatten();
+                let shared_task_id: Option<Uuid> = rec.try_get("shared_task_id").ok().flatten();
+                let created_at: DateTime<Utc> = rec.try_get("created_at").unwrap();
+                let updated_at: DateTime<Utc> = rec.try_get("updated_at").unwrap();
+                let project_name: String = rec.try_get("project_name").unwrap();
+                let last_activity_at: DateTime<Utc> = rec.try_get("last_activity_at").unwrap();
+                let has_in_progress_attempt: i64 =
+                    rec.try_get("has_in_progress_attempt").unwrap();
+                let last_attempt_failed: i64 = rec.try_get("last_attempt_failed").unwrap();
+                let executor: String = rec.try_get("executor").unwrap();
+
+                RecentTaskWithProject {
+                    task: TaskWithAttemptStatus {
+                        task: Task {
+                            id,
+                            project_id,
+                            title,
+                            description,
+                            status,
+                            parent_workspace_id,
+                            shared_task_id,
+                            created_at,
+                            updated_at,
+                        },
+                        has_in_progress_attempt: has_in_progress_attempt != 0,
+                        last_attempt_failed: last_attempt_failed != 0,
+                        executor,
+                    },
+                    project_name,
+                    last_activity_at,
+                }
             })
             .collect();
 

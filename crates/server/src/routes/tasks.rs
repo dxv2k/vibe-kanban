@@ -16,7 +16,7 @@ use db::models::{
     image::TaskImage,
     project::{Project, ProjectError},
     repo::Repo,
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, RecentTaskWithProject, Task, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
 };
@@ -40,6 +40,12 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskQuery {
     pub project_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RecentTasksQuery {
+    pub project_ids: Option<String>, // Comma-separated UUIDs
+    pub limit: Option<i64>,
 }
 
 pub async fn get_tasks(
@@ -460,6 +466,24 @@ pub async fn share_task(
     })))
 }
 
+pub async fn get_recent_tasks(
+    State(deployment): State<DeploymentImpl>,
+    Query(query): Query<RecentTasksQuery>,
+) -> Result<ResponseJson<ApiResponse<Vec<RecentTaskWithProject>>>, ApiError> {
+    let project_ids = query.project_ids.map(|ids| {
+        ids.split(',')
+            .filter_map(|id| Uuid::parse_str(id.trim()).ok())
+            .collect::<Vec<Uuid>>()
+    });
+
+    let limit = query.limit.unwrap_or(50);
+
+    let tasks = Task::find_recent_with_attempt_status(&deployment.db().pool, project_ids, limit)
+        .await?;
+
+    Ok(ResponseJson(ApiResponse::success(tasks)))
+}
+
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_actions_router = Router::new()
         .route("/", put(update_task))
@@ -473,6 +497,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
     let inner = Router::new()
         .route("/", get(get_tasks).post(create_task))
+        .route("/recent", get(get_recent_tasks))
         .route("/stream/ws", get(stream_tasks_ws))
         .route("/create-and-start", post(create_task_and_start))
         .nest("/{task_id}", task_id_router);
