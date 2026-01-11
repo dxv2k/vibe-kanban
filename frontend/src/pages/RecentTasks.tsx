@@ -63,7 +63,7 @@ interface TaskItemProps {
 }
 
 function TaskItem({ task, onClick }: TaskItemProps) {
-  const statusColor = STATUS_COLORS[task.task.status] || STATUS_COLORS.todo;
+  const statusColor = STATUS_COLORS[task.status] || STATUS_COLORS.todo;
 
   return (
     <div
@@ -79,16 +79,16 @@ function TaskItem({ task, onClick }: TaskItemProps) {
             </span>
           </div>
           <h3 className="font-medium text-foreground mb-2 group-hover:text-accent-foreground">
-            {task.task.title}
+            {task.title}
           </h3>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge
               variant="outline"
               className={`${statusColor} text-xs px-2 py-0.5`}
             >
-              {task.task.status}
+              {task.status}
             </Badge>
-            {task.task.has_in_progress_attempt && (
+            {task.has_in_progress_attempt && (
               <Badge
                 variant="outline"
                 className="bg-blue-50 text-blue-700 border-blue-200 text-xs px-2 py-0.5"
@@ -96,7 +96,7 @@ function TaskItem({ task, onClick }: TaskItemProps) {
                 Running
               </Badge>
             )}
-            {task.task.last_attempt_failed && (
+            {task.last_attempt_failed && (
               <Badge
                 variant="outline"
                 className="bg-red-50 text-red-700 border-red-200 text-xs px-2 py-0.5"
@@ -105,7 +105,7 @@ function TaskItem({ task, onClick }: TaskItemProps) {
               </Badge>
             )}
             <span className="text-xs text-muted-foreground">
-              {task.task.executor}
+              {task.executor}
             </span>
           </div>
         </div>
@@ -139,7 +139,7 @@ function TaskGroup({ title, tasks, onTaskClick }: TaskGroupProps) {
       <div className="space-y-2">
         {tasks.map((task) => (
           <TaskItem
-            key={task.task.id}
+            key={task.id}
             task={task}
             onClick={() => onTaskClick(task)}
           />
@@ -156,7 +156,7 @@ export function RecentTasks() {
   const groupedTasks = useMemo(() => groupTasksByTime(tasks), [tasks]);
 
   const handleTaskClick = (task: RecentTaskWithProject) => {
-    navigate(paths.projectTask(task.task.project_id, task.task.id));
+    navigate(paths.task(task.project_id, task.id));
   };
 
   if (isLoading) {
