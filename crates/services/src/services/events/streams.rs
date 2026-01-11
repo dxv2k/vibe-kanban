@@ -135,7 +135,40 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(_) => None,               // Filter out broadcast errors
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                project_id = %project_id,
+                                "tasks stream lagged; resyncing snapshot"
+                            );
+
+                            match Task::find_by_project_id_with_attempt_status(&db_pool, project_id).await {
+                                Ok(tasks) => {
+                                    // Rebuild the full snapshot like initial_msg
+                                    let tasks_map: serde_json::Map<String, serde_json::Value> = tasks
+                                        .into_iter()
+                                        .map(|task| (task.id.to_string(), serde_json::to_value(task).unwrap()))
+                                        .collect();
+
+                                    let resync_patch = json!([{
+                                        "op": "replace",
+                                        "path": "/tasks",
+                                        "value": tasks_map
+                                    }]);
+                                    Some(Ok(LogMsg::JsonPatch(serde_json::from_value(resync_patch).unwrap())))
+                                }
+                                Err(err) => {
+                                    tracing::error!(
+                                        error = %err,
+                                        project_id = %project_id,
+                                        "failed to resync tasks after lag"
+                                    );
+                                    Some(Err(std::io::Error::other(format!(
+                                        "failed to resync tasks after lag: {err}"
+                                    ))))
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -268,9 +301,11 @@ impl EventService {
         let initial_msg = LogMsg::JsonPatch(serde_json::from_value(initial_patch).unwrap());
 
         // Get filtered event stream
+        let db_pool = self.db.pool.clone();
         let filtered_stream =
             BroadcastStream::new(self.msg_store.get_receiver()).filter_map(move |msg_result| {
                 let session_ids = session_ids.clone();
+                let db_pool = db_pool.clone();
                 async move {
                     match msg_result {
                         Ok(LogMsg::JsonPatch(patch)) => {
@@ -356,7 +391,48 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(_) => None,               // Filter out broadcast errors
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                workspace_id = %workspace_id,
+                                "execution_processes stream lagged; resyncing snapshot"
+                            );
+
+                            // Re-fetch all execution processes for this workspace
+                            match Session::find_by_workspace_id(&db_pool, workspace_id).await {
+                                Ok(sessions) => {
+                                    let mut all_processes = Vec::new();
+                                    for session in &sessions {
+                                        if let Ok(processes) = ExecutionProcess::find_by_session_id(&db_pool, session.id, show_soft_deleted).await {
+                                            all_processes.extend(processes);
+                                        }
+                                    }
+
+                                    // Rebuild the full snapshot like initial_msg
+                                    let processes_map: serde_json::Map<String, serde_json::Value> = all_processes
+                                        .into_iter()
+                                        .map(|process| (process.id.to_string(), serde_json::to_value(process).unwrap()))
+                                        .collect();
+
+                                    let resync_patch = json!([{
+                                        "op": "replace",
+                                        "path": "/execution_processes",
+                                        "value": processes_map
+                                    }]);
+                                    Some(Ok(LogMsg::JsonPatch(serde_json::from_value(resync_patch).unwrap())))
+                                }
+                                Err(err) => {
+                                    tracing::error!(
+                                        error = %err,
+                                        workspace_id = %workspace_id,
+                                        "failed to resync execution_processes after lag"
+                                    );
+                                    Some(Err(std::io::Error::other(format!(
+                                        "failed to resync execution_processes after lag: {err}"
+                                    ))))
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -398,12 +474,16 @@ impl EventService {
         let initial_msg = LogMsg::JsonPatch(serde_json::from_value(initial_patch).unwrap());
 
         let type_str = scratch_type.to_string();
+        let scratch_type_clone = scratch_type.clone();
+        let db_pool = self.db.pool.clone();
 
         // Filter to only this scratch's events by matching id and payload.type in the patch value
         let filtered_stream =
             BroadcastStream::new(self.msg_store.get_receiver()).filter_map(move |msg_result| {
                 let id_str = scratch_id.to_string();
                 let type_str = type_str.clone();
+                let scratch_type_clone = scratch_type_clone.clone();
+                let db_pool = db_pool.clone();
                 async move {
                     match msg_result {
                         Ok(LogMsg::JsonPatch(patch)) => {
@@ -436,7 +516,41 @@ impl EventService {
                             None
                         }
                         Ok(other) => Some(Ok(other)),
-                        Err(_) => None,
+                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                scratch_id = %scratch_id,
+                                scratch_type = %scratch_type_clone,
+                                "scratch stream lagged; resyncing snapshot"
+                            );
+
+                            // Re-fetch the scratch data
+                            match Scratch::find_by_id(&db_pool, scratch_id, &scratch_type_clone).await {
+                                Ok(scratch) => {
+                                    let resync_patch = json!([{
+                                        "op": "replace",
+                                        "path": "/scratch",
+                                        "value": scratch
+                                    }]);
+                                    Some(Ok(LogMsg::JsonPatch(serde_json::from_value(resync_patch).unwrap())))
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        error = %err,
+                                        scratch_id = %scratch_id,
+                                        scratch_type = %scratch_type_clone,
+                                        "failed to resync scratch after lag, treating as empty"
+                                    );
+                                    // Treat as empty scratch (same as initial load failure)
+                                    let resync_patch = json!([{
+                                        "op": "replace",
+                                        "path": "/scratch",
+                                        "value": serde_json::Value::Null
+                                    }]);
+                                    Some(Ok(LogMsg::JsonPatch(serde_json::from_value(resync_patch).unwrap())))
+                                }
+                            }
+                        }
                     }
                 }
             });
