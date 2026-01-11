@@ -236,20 +236,20 @@ ORDER BY t.created_at DESC"#,
 
             format!(
                 r#"SELECT
-  t.id                            AS "id!: Uuid",
-  t.project_id                    AS "project_id!: Uuid",
+  t.id,
+  t.project_id,
   t.title,
   t.description,
-  t.status                        AS "status!: TaskStatus",
-  t.parent_workspace_id           AS "parent_workspace_id: Uuid",
-  t.shared_task_id                AS "shared_task_id: Uuid",
-  t.created_at                    AS "created_at!: DateTime<Utc>",
-  t.updated_at                    AS "updated_at!: DateTime<Utc>",
-  p.name                          AS "project_name!: String",
+  t.status,
+  t.parent_workspace_id,
+  t.shared_task_id,
+  t.created_at,
+  t.updated_at,
+  p.name AS project_name,
   COALESCE(
     (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
     t.updated_at
-  ) AS "last_activity_at!: DateTime<Utc>",
+  ) AS last_activity_at,
 
   CASE WHEN EXISTS (
     SELECT 1
@@ -260,7 +260,7 @@ ORDER BY t.created_at DESC"#,
        AND ep.status        = 'running'
        AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
      LIMIT 1
-  ) THEN 1 ELSE 0 END            AS "has_in_progress_attempt!: i64",
+  ) THEN 1 ELSE 0 END AS has_in_progress_attempt,
 
   CASE WHEN (
     SELECT ep.status
@@ -271,8 +271,7 @@ ORDER BY t.created_at DESC"#,
      AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
      ORDER BY ep.created_at DESC
      LIMIT 1
-  ) IN ('failed','killed') THEN 1 ELSE 0 END
-                                 AS "last_attempt_failed!: i64",
+  ) IN ('failed','killed') THEN 1 ELSE 0 END AS last_attempt_failed,
 
   COALESCE(
     ( SELECT s.executor
@@ -283,7 +282,7 @@ ORDER BY t.created_at DESC"#,
         LIMIT 1
       ),
     ''
-  )                               AS "executor!: String"
+  ) AS executor
 
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
@@ -298,20 +297,20 @@ LIMIT {}"#,
         } else {
             format!(
                 r#"SELECT
-  t.id                            AS "id!: Uuid",
-  t.project_id                    AS "project_id!: Uuid",
+  t.id,
+  t.project_id,
   t.title,
   t.description,
-  t.status                        AS "status!: TaskStatus",
-  t.parent_workspace_id           AS "parent_workspace_id: Uuid",
-  t.shared_task_id                AS "shared_task_id: Uuid",
-  t.created_at                    AS "created_at!: DateTime<Utc>",
-  t.updated_at                    AS "updated_at!: DateTime<Utc>",
-  p.name                          AS "project_name!: String",
+  t.status,
+  t.parent_workspace_id,
+  t.shared_task_id,
+  t.created_at,
+  t.updated_at,
+  p.name AS project_name,
   COALESCE(
     (SELECT MAX(w2.updated_at) FROM workspaces w2 WHERE w2.task_id = t.id),
     t.updated_at
-  ) AS "last_activity_at!: DateTime<Utc>",
+  ) AS last_activity_at,
 
   CASE WHEN EXISTS (
     SELECT 1
@@ -322,7 +321,7 @@ LIMIT {}"#,
        AND ep.status        = 'running'
        AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
      LIMIT 1
-  ) THEN 1 ELSE 0 END            AS "has_in_progress_attempt!: i64",
+  ) THEN 1 ELSE 0 END AS has_in_progress_attempt,
 
   CASE WHEN (
     SELECT ep.status
@@ -333,8 +332,7 @@ LIMIT {}"#,
      AND ep.run_reason IN ('setupscript','cleanupscript','codingagent')
      ORDER BY ep.created_at DESC
      LIMIT 1
-  ) IN ('failed','killed') THEN 1 ELSE 0 END
-                                 AS "last_attempt_failed!: i64",
+  ) IN ('failed','killed') THEN 1 ELSE 0 END AS last_attempt_failed,
 
   COALESCE(
     ( SELECT s.executor
@@ -345,7 +343,7 @@ LIMIT {}"#,
         LIMIT 1
       ),
     ''
-  )                               AS "executor!: String"
+  ) AS executor
 
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
