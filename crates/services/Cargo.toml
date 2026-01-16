@@ -1,11 +1,12 @@
 [package]
 name = "services"
-version = "0.0.144"
+version = "0.0.153"
 edition = "2024"
 
 [features]
 default = []
 cloud = []
+qa-mode = ["executors/qa-mode"]
 
 [dependencies]
 utils = { path = "../utils" }
@@ -29,6 +30,7 @@ dirs = "5.0"
 git2 = { workspace = true }
 tempfile = "3.21"
 async-trait = { workspace = true }
+enum_dispatch = "0.3.13"
 rust-embed = "8.2"
 ignore = "0.4"
 regex = "1.11.1"

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_with::rust::double_option;
 use sqlx::{Executor, FromRow, Sqlite, SqlitePool};
 use thiserror::Error;
 use ts_rs::TS;
@@ -21,10 +22,67 @@ pub struct Repo {
     pub path: PathBuf,
     pub name: String,
     pub display_name: String,
+    pub setup_script: Option<String>,
+    pub cleanup_script: Option<String>,
+    pub copy_files: Option<String>,
+    pub parallel_setup_script: bool,
+    pub dev_server_script: Option<String>,
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
     #[ts(type = "Date")]
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateRepo {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub display_name: Option<Option<String>>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub setup_script: Option<Option<String>>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub cleanup_script: Option<Option<String>>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub copy_files: Option<Option<String>>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "boolean | null")]
+    pub parallel_setup_script: Option<Option<bool>>,
+
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "double_option"
+    )]
+    #[ts(optional, type = "string | null")]
+    pub dev_server_script: Option<Option<String>>,
 }
 
 impl Repo {
@@ -37,6 +95,11 @@ impl Repo {
                       path,
                       name,
                       display_name,
+                      setup_script,
+                      cleanup_script,
+                      copy_files,
+                      parallel_setup_script as "parallel_setup_script!: bool",
+                      dev_server_script,
                       created_at as "created_at!: DateTime<Utc>",
                       updated_at as "updated_at!: DateTime<Utc>"
                FROM repos
@@ -70,6 +133,11 @@ impl Repo {
                       path,
                       name,
                       display_name,
+                      setup_script,
+                      cleanup_script,
+                      copy_files,
+                      parallel_setup_script as "parallel_setup_script!: bool",
+                      dev_server_script,
                       created_at as "created_at!: DateTime<Utc>",
                       updated_at as "updated_at!: DateTime<Utc>"
                FROM repos
@@ -78,6 +146,21 @@ impl Repo {
         )
         .fetch_optional(pool)
         .await
+    }
+
+    pub async fn find_by_ids(pool: &SqlitePool, ids: &[Uuid]) -> Result<Vec<Self>, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Fetch each repo individually since SQLite doesn't support array parameters
+        let mut repos = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(repo) = Self::find_by_id(pool, *id).await? {
+                repos.push(repo);
+            }
+        }
+        Ok(repos)
     }
 
     pub async fn find_or_create<'e, E>(
@@ -105,6 +188,11 @@ impl Repo {
                          path,
                          name,
                          display_name,
+                         setup_script,
+                         cleanup_script,
+                         copy_files,
+                         parallel_setup_script as "parallel_setup_script!: bool",
+                         dev_server_script,
                          created_at as "created_at!: DateTime<Utc>",
                          updated_at as "updated_at!: DateTime<Utc>""#,
             id,
@@ -125,5 +213,98 @@ impl Repo {
         .execute(pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    pub async fn list_all(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as!(
+            Repo,
+            r#"SELECT id as "id!: Uuid",
+                      path,
+                      name,
+                      display_name,
+                      setup_script,
+                      cleanup_script,
+                      copy_files,
+                      parallel_setup_script as "parallel_setup_script!: bool",
+                      dev_server_script,
+                      created_at as "created_at!: DateTime<Utc>",
+                      updated_at as "updated_at!: DateTime<Utc>"
+               FROM repos
+               ORDER BY display_name ASC"#
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn update(
+        pool: &SqlitePool,
+        id: Uuid,
+        payload: &UpdateRepo,
+    ) -> Result<Self, RepoError> {
+        let existing = Self::find_by_id(pool, id)
+            .await?
+            .ok_or(RepoError::NotFound)?;
+
+        // None = don't update (use existing)
+        // Some(None) = set to NULL
+        // Some(Some(v)) = set to v
+        let display_name = match &payload.display_name {
+            None => existing.display_name,
+            Some(v) => v.clone().unwrap_or_default(),
+        };
+        let setup_script = match &payload.setup_script {
+            None => existing.setup_script,
+            Some(v) => v.clone(),
+        };
+        let cleanup_script = match &payload.cleanup_script {
+            None => existing.cleanup_script,
+            Some(v) => v.clone(),
+        };
+        let copy_files = match &payload.copy_files {
+            None => existing.copy_files,
+            Some(v) => v.clone(),
+        };
+        let parallel_setup_script = match &payload.parallel_setup_script {
+            None => existing.parallel_setup_script,
+            Some(v) => v.unwrap_or(false),
+        };
+        let dev_server_script = match &payload.dev_server_script {
+            None => existing.dev_server_script,
+            Some(v) => v.clone(),
+        };
+
+        sqlx::query_as!(
+            Repo,
+            r#"UPDATE repos
+               SET display_name = $1,
+                   setup_script = $2,
+                   cleanup_script = $3,
+                   copy_files = $4,
+                   parallel_setup_script = $5,
+                   dev_server_script = $6,
+                   updated_at = datetime('now', 'subsec')
+               WHERE id = $7
+               RETURNING id as "id!: Uuid",
+                         path,
+                         name,
+                         display_name,
+                         setup_script,
+                         cleanup_script,
+                         copy_files,
+                         parallel_setup_script as "parallel_setup_script!: bool",
+                         dev_server_script,
+                         created_at as "created_at!: DateTime<Utc>",
+                         updated_at as "updated_at!: DateTime<Utc>""#,
+            display_name,
+            setup_script,
+            cleanup_script,
+            copy_files,
+            parallel_setup_script,
+            dev_server_script,
+            id
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(RepoError::from)
     }
 }
