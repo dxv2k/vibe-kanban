@@ -381,22 +381,15 @@ impl EventService {
                         Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                             tracing::warn!(
                                 skipped = skipped,
-                                workspace_id = %workspace_id,
+                                session_id = %session_id,
                                 "execution_processes stream lagged; resyncing snapshot"
                             );
 
-                            // Re-fetch all execution processes for this workspace
-                            match Session::find_by_workspace_id(&db_pool, workspace_id).await {
-                                Ok(sessions) => {
-                                    let mut all_processes = Vec::new();
-                                    for session in &sessions {
-                                        if let Ok(processes) = ExecutionProcess::find_by_session_id(&db_pool, session.id, show_soft_deleted).await {
-                                            all_processes.extend(processes);
-                                        }
-                                    }
-
+                            // Re-fetch all execution processes for this session
+                            match ExecutionProcess::find_by_session_id(&db_pool, session_id, show_soft_deleted).await {
+                                Ok(processes) => {
                                     // Rebuild the full snapshot like initial_msg
-                                    let processes_map: serde_json::Map<String, serde_json::Value> = all_processes
+                                    let processes_map: serde_json::Map<String, serde_json::Value> = processes
                                         .into_iter()
                                         .map(|process| (process.id.to_string(), serde_json::to_value(process).unwrap()))
                                         .collect();
@@ -411,7 +404,7 @@ impl EventService {
                                 Err(err) => {
                                     tracing::error!(
                                         error = %err,
-                                        workspace_id = %workspace_id,
+                                        session_id = %session_id,
                                         "failed to resync execution_processes after lag"
                                     );
                                     Some(Err(std::io::Error::other(format!(
