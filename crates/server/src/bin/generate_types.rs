@@ -146,6 +146,8 @@ fn generate_types_content() -> String {
         services::services::git_host::ProviderKind::decl(),
         server::routes::task_attempts::RepoBranchStatus::decl(),
         server::routes::task_attempts::UpdateWorkspace::decl(),
+        server::routes::task_attempts::files::FileUploadResponse::decl(),
+        server::routes::task_attempts::files::FileUploadError::decl(),
         server::routes::task_attempts::workspace_summary::WorkspaceSummaryRequest::decl(),
         server::routes::task_attempts::workspace_summary::WorkspaceSummary::decl(),
         server::routes::task_attempts::workspace_summary::WorkspaceSummaryResponse::decl(),

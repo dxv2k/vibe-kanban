@@ -1142,6 +1142,54 @@ export const imagesApi = {
   },
 };
 
+// File upload response type (matches Rust FileUploadResponse)
+export interface FileUploadResponse {
+  file_name: string;
+  file_path: string;
+  size_bytes: number;
+}
+
+// Files API (for uploading files to workspace working directory)
+export const filesApi = {
+  /**
+   * Upload a file to a workspace's working directory.
+   * Unlike images (which go to .vibe-images for the agent to see),
+   * files go directly to the workspace root for the agent to use as input.
+   */
+  uploadToWorkspace: async (
+    workspaceId: string,
+    file: File,
+    targetPath?: string
+  ): Promise<FileUploadResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const queryParam = targetPath
+      ? `?target_path=${encodeURIComponent(targetPath)}`
+      : '';
+
+    const response = await fetch(
+      `/api/task-attempts/${workspaceId}/files/upload${queryParam}`,
+      {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new ApiError(
+        `Failed to upload file: ${errorText}`,
+        response.status,
+        response
+      );
+    }
+
+    return handleApiResponse<FileUploadResponse>(response);
+  },
+};
+
 // Approval API
 export const approvalsApi = {
   respond: async (

@@ -1,5 +1,6 @@
 pub mod codex_setup;
 pub mod cursor_setup;
+pub mod files;
 pub mod gh_cli_setup;
 pub mod images;
 pub mod pr;
@@ -1791,7 +1792,8 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/stream/ws", get(stream_workspaces_ws))
         .route("/summary", post(workspace_summary::get_workspace_summaries))
         .nest("/{id}", task_attempt_id_router)
-        .nest("/{id}/images", images::router(deployment));
+        .nest("/{id}/images", images::router(deployment))
+        .nest("/{id}/files", files::router(deployment));
 
     Router::new().nest("/task-attempts", task_attempts_router)
 }

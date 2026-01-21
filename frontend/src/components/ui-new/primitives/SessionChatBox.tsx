@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import {
   PaperclipIcon,
+  ImageIcon,
   CheckIcon,
   ClockIcon,
   XIcon,
@@ -56,7 +57,10 @@ interface ActionsProps {
   onQueue: () => void;
   onCancelQueue: () => void;
   onStop: () => void;
+  /** Handler for image attachments (agent can see these) */
   onPasteFiles: (files: File[]) => void;
+  /** Handler for file attachments (uploaded to workspace workdir) */
+  onAttachFiles?: (files: File[]) => void;
 }
 
 interface SessionProps {
@@ -163,6 +167,7 @@ export function SessionChatBox({
   onViewCode,
 }: SessionChatBoxProps) {
   const { t } = useTranslation('tasks');
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Determine if in feedback mode, edit mode, or approval mode
@@ -229,8 +234,8 @@ export function SessionChatBox({
     }
   };
 
-  // File input handlers
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Image input handler (for images the agent can see)
+  const handleImageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []).filter((f) =>
       f.type.startsWith('image/')
     );
@@ -240,7 +245,20 @@ export function SessionChatBox({
     e.target.value = '';
   };
 
-  const handleAttachClick = () => {
+  const handleImageAttachClick = () => {
+    imageInputRef.current?.click();
+  };
+
+  // File input handler (for files uploaded to workspace)
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0 && actions.onAttachFiles) {
+      actions.onAttachFiles(files);
+    }
+    e.target.value = '';
+  };
+
+  const handleFileAttachClick = () => {
     fileInputRef.current?.click();
   };
 
@@ -628,19 +646,38 @@ export function SessionChatBox({
       }
       footerLeft={
         <>
+          {/* File attachment button - uploads files to workspace workdir */}
+          {actions.onAttachFiles && (
+            <>
+              <ToolbarIconButton
+                icon={PaperclipIcon}
+                aria-label="Attach file to workspace"
+                onClick={handleFileAttachClick}
+                disabled={isDisabled || isRunning}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+            </>
+          )}
+          {/* Image attachment button - for agent to see */}
           <ToolbarIconButton
-            icon={PaperclipIcon}
-            aria-label="Attach file"
-            onClick={handleAttachClick}
+            icon={ImageIcon}
+            aria-label="Attach image"
+            onClick={handleImageAttachClick}
             disabled={isDisabled || isRunning}
           />
           <input
-            ref={fileInputRef}
+            ref={imageInputRef}
             type="file"
             accept="image/*"
             multiple
             className="hidden"
-            onChange={handleFileInputChange}
+            onChange={handleImageInputChange}
           />
           {toolbarActions?.actions.map((action) => {
             const icon = action.icon;

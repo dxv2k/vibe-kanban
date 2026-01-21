@@ -20,6 +20,7 @@ import { useSessionMessageEditor } from '@/hooks/useSessionMessageEditor';
 import { useSessionQueueInteraction } from '@/hooks/useSessionQueueInteraction';
 import { useSessionSend } from '@/hooks/useSessionSend';
 import { useSessionAttachments } from '@/hooks/useSessionAttachments';
+import { useSessionFileAttachments } from '@/hooks/useSessionFileAttachments';
 import { useMessageEditRetry } from '@/hooks/useMessageEditRetry';
 import { useBranchStatus } from '@/hooks/useBranchStatus';
 import { useApprovalMutation } from '@/hooks/useApprovalMutation';
@@ -257,6 +258,10 @@ export function SessionChatBoxContainer({
 
   const { uploadFiles, localImages, clearUploadedImages } =
     useSessionAttachments(workspaceId, handleInsertMarkdown);
+
+  // File attachments - uploads files directly to workspace workdir
+  const { uploadFiles: uploadFilesToWorkspace } =
+    useSessionFileAttachments(workspaceId);
 
   // Executor/variant selection
   const {
@@ -611,6 +616,7 @@ export function SessionChatBoxContainer({
         onCancelQueue: cancelQueue,
         onStop: stopExecution,
         onPasteFiles: uploadFiles,
+        onAttachFiles: uploadFilesToWorkspace,
       }}
       variant={{
         selected: selectedVariant,
